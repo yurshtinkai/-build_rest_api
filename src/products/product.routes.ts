@@ -1,7 +1,7 @@
 import express, { Request, Response, NextFunction } from "express";
-import { Product, UnitProduct } from "./product.interface";
 import * as database from "./product.database";
 import { StatusCodes } from "http-status-codes";
+import { UnitProduct } from "./product.interface";
 
 const asyncHandler = (fn: Function) =>
     (req: Request, res: Response, next: NextFunction) => {

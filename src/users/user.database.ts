@@ -1,128 +1,70 @@
-import { User, UnitUser, Users } from "./user.interface";
+import mysql from 'mysql2/promise';
+import { User, UnitUser } from "./user.interface";
 import bcrypt from "bcryptjs";
-import { v4 as random } from "uuid";
-import fs from "fs";
 
-let users: Users = loadUsers();
+const pool = mysql.createPool({
+    host: 'localhost',
+    user: 'root',
+    password: '', 
+    database: 'users_db',
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0
+});
 
-function loadUsers(): Users {
-  try {
-    const data = fs.readFileSync("./users.json", "utf-8");
-    return JSON.parse(data);
-  } catch (error) {
-    console.log(`Error ${error}`);
-    return {};
-  }
-}
-
-function saveUsers() {
-  try {
-    fs.writeFileSync("./users.json", JSON.stringify(users), "utf-8");
-    console.log(`User saved successfully!`);
-  } catch (error) {
-    console.log(`Error : ${error}`);
-  }
-}
-
-export const findAll = async (): Promise<UnitUser[]> => Object.values(users);
-
-export const findOne = async (id: string): Promise<UnitUser> => users[id];
-
-export const create = async (userData: UnitUser): Promise<UnitUser | null> => {
-  let id = random();
-
-  let check_user = await findOne(id);
-
-  while (check_user) {
-    id = random();
-    check_user = await findOne(id);
-  }
-
-  const salt = await bcrypt.genSalt(10);
-
-  const hashedPassword = await bcrypt.hash(userData.password, salt);
-
-  const user: UnitUser = {
-    id: id,
-    username: userData.username,
-    email: userData.email,
-    password: hashedPassword,
-  };
-
-  users[id] = user;
-
-  saveUsers();
-
-  return user;
+export const findAll = async (): Promise<UnitUser[]> => {
+    const [rows] = await pool.query('SELECT * FROM users');
+    return rows as UnitUser[];
 };
 
-export const findByEmail = async (
-  user_email: string
-): Promise<null | UnitUser> => {
-  const allUsers = await findAll();
-
-  const getUser = allUsers.find((result) => user_email === result.email);
-
-  if (!getUser) {
-    return null;
-  }
-
-  return getUser;
+export const findOne = async (id: string): Promise<UnitUser> => {
+    const [rows] = await pool.query('SELECT * FROM users WHERE id = ?', [id]);
+    return (rows as UnitUser[])[0];
 };
 
-export const comparePassword = async (
-  email: string,
-  supplied_password: string
-): Promise<null | UnitUser> => {
-  const user = await findByEmail(email);
-
-  const decryptPassword = await bcrypt.compare(
-    supplied_password,
-    user!.password
-  );
-
-  if (!decryptPassword) {
-    return null;
-  }
-
-  return user;
-};
-
-export const update = async (
-  id: string,
-  updateValues: User
-): Promise<UnitUser | null> => {
-  const userExists = await findOne(id);
-
-  if (!userExists) {
-    return null;
-  }
-
-  if (updateValues.password) {
+export const create = async (userData: User): Promise<UnitUser | null> => {
     const salt = await bcrypt.genSalt(10);
-    const newPass = await bcrypt.hash(updateValues.password, salt);
+    const hashedPassword = await bcrypt.hash(userData.password, salt);
 
-    updateValues.password = newPass;
-  }
-
-  users[id] = {
-    ...userExists,
-    ...updateValues,
-  };
-
-  saveUsers();
-
-  return users[id];
+    const [result] = await pool.query(
+        'INSERT INTO users (username, email, password) VALUES (?, ?, ?)',
+        [userData.username, userData.email, hashedPassword]
+    );
+    
+    const id = (result as any).insertId;
+    return findOne(id.toString());
 };
 
-export const remove = async (id: string): Promise<null | void> => {
-  const user = await findOne(id);
+export const findByEmail = async (email: string): Promise<UnitUser | null> => {
+    const [rows] = await pool.query('SELECT * FROM users WHERE email = ?', [email]);
+    return (rows as UnitUser[])[0] || null;
+};
 
-  if (!user) {
-    return null;
-  }
+export const comparePassword = async (email: string, supplied_password: string): Promise<UnitUser | null> => {
+    const user = await findByEmail(email);
+    if (!user) return null;
 
-  delete users[id];
+    const decryptPassword = await bcrypt.compare(supplied_password, user.password);
+    return decryptPassword ? user : null;
+};
 
-  saveUsers();
+export const update = async (id: string, updateValues: User): Promise<UnitUser | null> => {
+    const userExists = await findOne(id);
+    if (!userExists) return null;
+
+    if (updateValues.password) {
+        const salt = await bcrypt.genSalt(10);
+        updateValues.password = await bcrypt.hash(updateValues.password, salt);
+    }
+
+    await pool.query(
+        'UPDATE users SET username = ?, email = ?, password = ? WHERE id = ?',
+        [updateValues.username, updateValues.email, updateValues.password, id]
+    );
+
+    return findOne(id);
+};
+
+export const remove = async (id: string): Promise<void> => {
+    await pool.query('DELETE FROM users WHERE id = ?', [id]);
 };
